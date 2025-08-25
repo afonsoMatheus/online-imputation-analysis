@@ -1,18 +1,5 @@
-"""
-Main function to simulate missing data in heart rate column in COVID-19 wearables datasets, avaiable at: 
-https://storage.googleapis.com/gbsc-gcp-project-ipop_public/COVID-19/COVID-19-Wearables.zip).
 
-Command-line Arguments:
-    -m: Missing values mechanism (choices: MCAR, MAR, MNAR)
-    -p: Percentage of missing values (integer)
-    -n: Number of subfolders to process (integer)
-
-Outputs:
-    - CSV files with simulated missing values saved in a structured directory format.
-    - Each file is named according to the original file name, mechanism, percentage, and dataset index.
-"""
 import os
-import argparse
 import pandas as pd
 import numpy as np
 from tqdm import tqdm
@@ -25,7 +12,7 @@ if __name__ == "__main__":
 
     mr_f = 5
     mr_n = 5
-    mechanisms = ["MCAR"]
+    mechanisms = ["MNAR_l", "MNAR_h"]
     num_datasets = 5
 
     folder_path_o = os.path.join(
@@ -45,7 +32,7 @@ if __name__ == "__main__":
                         file_path = os.path.join(folder_path_o, file_name)
                     else:
                         folder_path_m = os.path.join(
-                            os.path.dirname(__file__), '..', '..', 'Data', 'COVID-19-Wearables-Missing',
+                        os.path.dirname(__file__), '..', '..', 'Data', 'COVID-19-Wearables-Missing',
                             mechanism, file_name.split('_')[0], str(i)
                         )
                         file_path = os.path.join(
@@ -74,35 +61,74 @@ if __name__ == "__main__":
                                 y=X_ucmar.heartrate.to_numpy(),
                                 missing_rate=mr_f,
                                 x_miss="heartrate",
-                                seed=mr*mr_f
+                                seed=i
                             )
                             generate_data = generator.random().reset_index()
                             # adiciona o row_id de volta para garantir alinhamento
                             generate_data["row_id"] = X["row_id"].to_numpy()
-                        case "MAR":
-                            X = data[["datetime", "heartrate", "row_id"]].copy()
+                        case "MAR_l":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].copy()
                             X["time"] = pd.to_datetime(X["datetime"]).dt.time
                             generator = uMAR(
                                 X=X,
-                                y=data.heartrate.to_numpy(),
+                                y=X.heartrate.to_numpy(),
                                 missing_rate=mr_f,
                                 x_miss='heartrate',
-                                x_obs='time'
+                                x_obs='time',
+                                seed=i
                             )
                             generate_data = generator.lowest().reset_index()
                             generate_data["row_id"] = X["row_id"].to_numpy()
-                        case "MNAR":
-                            X = data[["datetime", "heartrate", "row_id"]].copy()
+                        case "MAR_mix":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].copy()
+                            X["time"] = pd.to_datetime(X["datetime"]).dt.time
+                            generator = uMAR(
+                                X=X,
+                                y=X.heartrate.to_numpy(),
+                                missing_rate=mr_f,
+                                x_miss='heartrate',
+                                x_obs='time',
+                                seed=i
+                            )
+                            generate_data = generator.mix().reset_index()
+                            generate_data["row_id"] = X["row_id"].to_numpy()
+                        case "MAR_h":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].copy()
+                            X["time"] = pd.to_datetime(X["datetime"]).dt.time
+                            generator = uMAR(
+                                X=X,
+                                y=X.heartrate.to_numpy(),
+                                missing_rate=mr_f,
+                                x_miss='heartrate',
+                                x_obs='time',
+                                seed=i
+                            )
+                            generate_data = generator.highest().reset_index()
+                            generate_data["row_id"] = X["row_id"].to_numpy()
+                        case "MNAR_l":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].reset_index(drop=True).copy()
                             generator = uMNAR(
                                 X=X,
-                                y=data.heartrate.to_numpy(),
+                                y=X.heartrate.to_numpy(),
                                 threshold=0,
                                 missing_rate=mr_f,
-                                x_miss='heartrate'
+                                x_miss='heartrate',
+                                seed = i
                             )
                             generate_data = generator.run().reset_index()
                             generate_data["row_id"] = X["row_id"].to_numpy()
-
+                        case "MNAR_h":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].reset_index(drop=True).copy()
+                            generator = uMNAR(
+                                X=X,
+                                y=X.heartrate.to_numpy(),
+                                threshold=1,
+                                missing_rate=mr_f,
+                                x_miss='heartrate',
+                                seed = i
+                            )
+                            generate_data = generator.run().reset_index()
+                            generate_data["row_id"] = X["row_id"].to_numpy()
                         case _:
                             print(f"Invalid mechanism {mechanism}.")
                             continue
