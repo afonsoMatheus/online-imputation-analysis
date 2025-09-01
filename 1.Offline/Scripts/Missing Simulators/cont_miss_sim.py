@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     mr_f = 5
     mr_n = 5
-    mechanisms = ["MNAR_l", "MNAR_h"]
+    mechanisms = ["MAR_l", "MAR_h"]
     num_datasets = 5
 
     folder_path_o = os.path.join(
