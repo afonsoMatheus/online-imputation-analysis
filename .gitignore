@@ -4,12 +4,14 @@
 1.Offline/Data/boxplot.py
 1.Offline/Data/missing_analysis.ipynb
 1.Offline/Data/threshold_contamination.csv
+1.Offline/Results/Patients/
+1.Offline/Results/Metadata/
 2.Sleep/Data/
-3.RHR/Data/
+3.Online/Data/
 sleep_classifiers/
 Logs/
-3.RHR/Scripts/Anomalies-Detection/Metrics
+3.Online/Scripts/Anomalies-Detection/Metrics
 .python-version
 run_all.py
-Results/
 Metrics/
+3.Online/Results/
