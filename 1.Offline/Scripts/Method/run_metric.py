@@ -184,10 +184,10 @@ if __name__ == "__main__":
         for patient_id in failed_patients:
             print(f"❌ Patient {patient_id} failed for:")
    
-    metric = "HROS"
-    process_original(metric)
+    metric = "RHR"
+    # process_original(metric)
 
-    mechanisms = ["MCAR", "MAR_l", "MAR_h", "MNAR_l", "MNAR_h"]
+    mechanisms = ["MAR_m", "MNAR_m"]
     threads = []
     for mech in mechanisms:
         t = threading.Thread(target=process_mechanism, args=(metric,mech,5,))

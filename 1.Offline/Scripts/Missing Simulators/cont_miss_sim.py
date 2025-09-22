@@ -12,7 +12,7 @@ if __name__ == "__main__":
 
     mr_f = 5
     mr_n = 5
-    mechanisms = ["MAR_l", "MAR_h"]
+    mechanisms = ["MAR_m"]
     num_datasets = 5
 
     folder_path_o = os.path.join(
@@ -92,6 +92,21 @@ if __name__ == "__main__":
                             )
                             generate_data = generator.mix().reset_index()
                             generate_data["row_id"] = X["row_id"].to_numpy()
+                        case "MAR_m":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].copy()
+                            X.reset_index(drop=True, inplace=True)
+                            X["time"] = pd.to_datetime(X["datetime"]).dt.time
+                            X["time"] = pd.to_timedelta(X["time"].astype(str))
+                            generator = uMAR(
+                                X=X,
+                                y=X.heartrate.to_numpy(),
+                                missing_rate=mr_f,
+                                x_miss='heartrate',
+                                x_obs='time',
+                                seed=i
+                            )
+                            generate_data = generator.median().reset_index()
+                            generate_data["row_id"] = X["row_id"].to_numpy()
                         case "MAR_h":
                             X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].copy()
                             X["time"] = pd.to_datetime(X["datetime"]).dt.time
@@ -111,6 +126,18 @@ if __name__ == "__main__":
                                 X=X,
                                 y=X.heartrate.to_numpy(),
                                 threshold=0,
+                                missing_rate=mr_f,
+                                x_miss='heartrate',
+                                seed = i
+                            )
+                            generate_data = generator.run().reset_index()
+                            generate_data["row_id"] = X["row_id"].to_numpy()
+                        case "MNAR_m":
+                            X = data[["datetime", "heartrate", "row_id"]][~data["heartrate"].isna()].reset_index(drop=True).copy()
+                            generator = uMNAR(
+                                X=X,
+                                y=X.heartrate.to_numpy(),
+                                threshold=0.5,
                                 missing_rate=mr_f,
                                 x_miss='heartrate',
                                 seed = i
