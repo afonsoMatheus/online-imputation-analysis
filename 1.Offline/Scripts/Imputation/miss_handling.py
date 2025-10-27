@@ -16,10 +16,7 @@ def tree_input(df):
 
     model = (
         preprocessing.StandardScaler() |
-        tree.HoeffdingTreeRegressor(
-            grace_period=100,
-            model_selector_decay=0.9
-        )
+        tree.HoeffdingTreeRegressor()
     )
 
     target = df.loc[df['heartrate'].isna(), 'target'].tolist()
@@ -36,7 +33,6 @@ def tree_input(df):
 
         else:
             model.learn_one(x, y)
-            # heartrate_imputed.append(y)
 
     rmse = root_mean_squared_error(target, heartrate_imputed)
     df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
@@ -72,7 +68,6 @@ def mlp_input(df):
             heartrate_imputed.append(round(y_pred, 0))
         else:
             model.learn_one(x, y)
-            # heartrate_imputed.append(y)
 
     df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
     rmse = root_mean_squared_error(target, heartrate_imputed)
@@ -99,7 +94,6 @@ def reg_input(df):
 
         else:
             model.learn_one(x, y)
-            # heartrate_imputed.append(y)
 
     rmse = root_mean_squared_error(target, heartrate_imputed)
     df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
@@ -151,9 +145,6 @@ def knn_input(df):
 
         else:
             model.learn_one(x, y)
-            # heartrate_imputed.append(y)
-
-    # df['heartrate_imputed'] = heartrate_imputed
 
     df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
     rmse = root_mean_squared_error(target, heartrate_imputed)
@@ -164,7 +155,7 @@ def run_imputer(imp_name, imp_func, df):
     start_time = time.time()
     rmse, imp_df = imp_func(df)
     elapsed = time.time() - start_time
-    print(f"Imputer {imp_name} completed in {elapsed:.2f}")
+    # print(f"Imputer {imp_name} completed in {elapsed:.2f}")
     return imp_name, rmse, elapsed, imp_df
 
 def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imputed):
@@ -184,7 +175,7 @@ def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imp
         df = pd.read_csv(os.path.join(folder_path_m, files_hr[0]))
         first_valid_idx = df['heartrate'].first_valid_index()
         df = df.loc[first_valid_idx:].reset_index(drop=True)
-        # df = df.iloc[:5000]
+        # df = df.iloc[:20000]
 
         df['datetime'] = pd.to_datetime(df['datetime'])
         df['hour'] = df['datetime'].dt.hour
@@ -216,7 +207,7 @@ def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imp
                     index=False
                 )
 
-                print(f"✅ Processed {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i}")
+                print(f"✅ Processed {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i} | Imputer: {imp_name}")
 
             except Exception as e:
                 print(f"❌ Error running imputer {name} on {pat} | {mech} | {mr} | Dataset {i}: {e}")
@@ -240,7 +231,7 @@ def process_mechanism(mech, num_datasets, mrs):
         for name in os.listdir(folder_path_m_base)
         if os.path.isdir(os.path.join(folder_path_m_base, name))
     ]
-    patients = patients[:1]  # Limitar ao primeiro paciente
+    patients = patients[:3]  # Limitar ao primeiro paciente
 
     for i in range(1, num_datasets + 1):
         for pat in tqdm(patients, desc=f"Processing mechanism {mech}"):
@@ -260,27 +251,36 @@ def process_mechanism(mech, num_datasets, mrs):
                     ): mr for mr in mrs
                 }
 
-                for future in tqdm(as_completed(futures), total=len(futures), desc="MRs completed", leave=False):
+                # for future in tqdm(as_completed(futures), total=len(futures), desc="MRs completed", leave=False):
+                for future in as_completed(futures):
                     mr = futures[future]
                     try:
                         result = future.result()
-                        local_results[mech].update(result)
+                        for mr_key, mr_dict in result.items():
+                            if mr_key not in local_results[mech]:
+                                local_results[mech][mr_key] = mr_dict.copy()
+                            else:
+                                for k, v in mr_dict.items():
+                                    local_results[mech][mr_key][k] = local_results[mech][mr_key].get(k, 0) + v
+
                     except Exception as e:
                         print(f"❌ Falha no MR {mr}: {e}")
 
     # --- Normalização ---
     for mr in local_results[mech]:
         for imp in imputers:
+            # print(f"Acummulated {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][imp] /= len(patients) * num_datasets
+            # print(f"Normalized {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][f"t_{imp}"] /= len(patients) * num_datasets
+            # print()
 
     return local_results
 
 # ---- Execução principal ---- #
 if __name__ == "__main__":
     mechanisms_batchs = [["MNAR_l", "MNAR_m","MNAR_h"],["MAR_l", "MAR_m", "MAR_h"],["MCAR"]]
-    # mechanisms = ["MCAR"]
-    # mechanisms = ["MCAR", "MAR_l", "MNAR_h"]
+    # mechanisms_batchs = [["MCAR"]]
     mrs = ["05", "10", "15", "20", "25"]
     num_datasets = 1
 
@@ -303,45 +303,48 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f"\n❌ Erro ao processar {mech_name}: {e}")
 
-        # ---- Gera DataFrame final ---- #
+            time_elapsed = time.time() - time_start
+            hours = time_elapsed / 3600
+            print(f"\n⏱️ Tempo de execução para mecanismos {mechanisms}: {hours:.2f} horas")
 
-        prefix = mechanisms[0].split('_', 1)[0]
-
-        records = []
-        for mech in combined_results:
-            for mr in combined_results[mech]:
-                for imp in imputers:
-                    records.append({
-                        'mechanism': mech,
-                        'missing_rate': mr,
-                        'imputer': imp,
-                        'rmse': round(combined_results[mech][mr][imp], 2),
-                        'time': round(combined_results[mech][mr][f't_{imp}'], 2)
-                    })
-
-        results_df = pd.DataFrame(records)
-        
-        results_df.to_csv(f'imputation_results_{prefix}.csv', index=False)
-        
-        critical = []
-        for imp in imputers:
+    # ---- Gera DataFrame final ---- #
+            records = []
             for mech in combined_results:
                 for mr in combined_results[mech]:
-                    critical.append({
-                        'classifier_name': imp,
-                        'dataset_name': f"{mech}_{mr}",
-                        'accuracy': combined_results[mech][mr][imp]
-                    })
-        critical_df = pd.DataFrame(critical)
-        critical_df.to_csv(f'imputation_critical_{prefix}.csv', index=False)
+                    for imp in imputers:
+                        records.append({
+                            'mechanism': mech,
+                            'missing_rate': mr,
+                            'imputer': imp,
+                            'rmse': round(combined_results[mech][mr][imp], 2),
+                            'time': round(combined_results[mech][mr][f't_{imp}'], 2)
+                        })
 
-        time_elapsed = time.time() - time_start
-        minutes = time_elapsed / 60
-        print(f"\n⏱️ Tempo de execução para mecanismos {mechanisms}: {minutes:.2f} minutos")
+            results_df = pd.DataFrame(records)
+            result_path = f'Analysis/imputation_results.csv'
+            if os.path.exists(result_path):
+                os.remove(result_path)
+            results_df.to_csv(result_path, index=False)
+            
+            critical = []
+            for imp in imputers:
+                for mech in combined_results:
+                    for mr in combined_results[mech]:
+                        critical.append({
+                            'classifier_name': imp,
+                            'dataset_name': f"{mech}_{mr}",
+                            'accuracy': combined_results[mech][mr][imp]
+                        })
+
+            critical_df = pd.DataFrame(critical)
+            critical_path = f'CD_Diagram/imputation_critical.csv'
+            if os.path.exists(critical_path):
+                os.remove(critical_path)
+            critical_df.to_csv(critical_path, index=False)
 
     total_time_elapsed = time.time() - total_time_start
-    minutes = total_time_elapsed / 60
-    print(f"\n⏱️ Tempo total de execução: {minutes:.2f} minutos")
+    hours = total_time_elapsed / 3600
+    print(f"\n⏱️ Tempo total de execução: {hours:.2f} horas")
 
 
 
