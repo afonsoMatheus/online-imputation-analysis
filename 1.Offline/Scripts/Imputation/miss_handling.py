@@ -1,11 +1,16 @@
 import pandas as pd
 import numpy as np
+import random
 import os
 from sklearn.metrics import root_mean_squared_error
 from tqdm import tqdm
 from river import stats, linear_model, preprocessing, neighbors, neural_net, optim, tree
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
+
+SEED = 1
+np.random.seed(SEED)
+random.seed(SEED)
 
 imputers = ['mean', 'reg', 'mlp', 'tree']
 # imputers = ['mlp']    
@@ -16,7 +21,9 @@ def tree_input(df):
 
     model = (
         preprocessing.StandardScaler() |
-        tree.HoeffdingTreeRegressor()
+        tree.HoeffdingTreeRegressor(
+            # seed = SEED
+        )
     )
 
     target = df.loc[df['heartrate'].isna(), 'target'].tolist()
@@ -52,7 +59,7 @@ def mlp_input(df):
         ),
         # optimizer=optim.SGD(0.001),
         optimizer=optim.Adam(0.1),
-        seed=1
+        # seed=SEED
     )
     
     target = df.loc[df['heartrate'].isna(), 'target'].tolist()
