@@ -4,171 +4,150 @@ import random
 import os
 from sklearn.metrics import root_mean_squared_error
 from tqdm import tqdm
-from river import stats, linear_model, preprocessing, neighbors, neural_net, optim, tree
+from itertools import product
+from river import stats, linear_model, preprocessing,  tree, forest, optim, utils
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
+from eval_bml_imp import eval_oml_imp_horizon
+import sys
+
+MEC_BATCHES = [["MCAR"], ["MAR_l", "MAR_m", "MAR_h"], ["MNAR_l", "MNAR_m", "MNAR_h"]]
+MRS = ["05", "10", "15", "20", "25"]
+N = 1
+P_NUM = 30
+M_NUM = 12000000000
+
+SPLIT = 0
+HORIZON = 10000000
+GRACE_PERIOD = 0
+OBSERVED_PATIENTS = ['AOYM4KG', 'APGIB2T']
+EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
+FEATURES = ['hour', 'minute']  #second make patients 'AOYM4KG', 'APGIB2T' break in linear regression
 
 SEED = 1
 np.random.seed(SEED)
 random.seed(SEED)
 
-imputers = ['mean', 'reg', 'mlp', 'tree']
-# imputers = ['mlp']    
+class MeanRegressor:
+    def __init__(self):
+        self.mean = stats.Mean()
 
-def tree_input(df):
+    def learn_one(self,x, y):
+        self.mean.update(y)
+        return self
 
-    df_inputed = df[['datetime', 'heartrate', 'target']].copy()
-
-    model = (
-        preprocessing.StandardScaler() |
-        tree.HoeffdingTreeRegressor(
-            # seed = SEED
-        )
-    )
-
-    target = df.loc[df['heartrate'].isna(), 'target'].tolist()
-    heartrate_imputed = []
-    # for _, row in tqdm(df.iterrows(), total=len(df), desc="Imputing with tree"):
-    for _, row in df.iterrows():
-        x = {"hour": row['hour'], "minute": row['minute'], "second": row['second']}
-        y = row['heartrate']
-
-        if np.isnan(y):
-            y_pred = model.predict_one(x) or -1
-            heartrate_imputed.append(round(y_pred, 0))
-            # model.learn_one(x, round(y_pred, 1))
-
-        else:
-            model.learn_one(x, y)
-
-    rmse = root_mean_squared_error(target, heartrate_imputed)
-    df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
-    return rmse, df_inputed
-
-
-def mlp_input(df):
-
-    df_inputed = df[['datetime', 'heartrate', 'target']].copy()
-
-    model = preprocessing.StandardScaler() | neural_net.MLPRegressor(
-        hidden_dims=(5,),
-        activations=(
-            neural_net.activations.ReLU,
-            neural_net.activations.ReLU,
-            neural_net.activations.Identity
-        ),
-        # optimizer=optim.SGD(0.001),
-        optimizer=optim.Adam(0.1),
-        # seed=SEED
-    )
+    def predict_one(self,x):
+        return self.mean.get()
     
-    target = df.loc[df['heartrate'].isna(), 'target'].tolist()
-    heartrate_imputed = []
+param_grid = {
+    "mean": {},
+    "reg": {
+        'opt': [0.01, 0.001, 0.0001],
+        # 'l2': [0.0, 1e-5, 1e-4],
+    },
+    "tree": {
+        'gp': [1000, 10000, 100000],
+        # 'md': [5, 10, 15]
+    }
+}
+    
+MODEL_FACTORY = {
+    "mean": {
+        "builder": lambda params: MeanRegressor()
+    },
+    "reg": {
+        "builder": lambda params: (
+            preprocessing.StandardScaler() |
+            linear_model.LinearRegression(
+                optimizer=optim.SGD(params["opt"]),
+                l2=params.get("l2", 0.0),
+            )
+        )
+    },
+    "tree": {
+        "builder": lambda params: (
+            preprocessing.StandardScaler() |
+            tree.HoeffdingTreeRegressor(
+                grace_period=params["gp"],
+                max_depth=params.get("md", None)
+            )
+        )
+    }
+}
 
-    # for _, row in tqdm(df.iterrows(), total=len(df), desc="Imputing with MLP"):
-    for _, row in df.iterrows():
-        x = {"hour": row['hour'], "minute": row['minute'], "second": row['second']}
-        y = row['heartrate']
+def build_models(param_grid, factory):
+    MODELS = {}
 
-        if np.isnan(y):
-            y_pred = model.predict_one(x) or -1
-            heartrate_imputed.append(round(y_pred, 0))
-        else:
-            model.learn_one(x, y)
+    for family, grid in param_grid.items():
 
-    df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
-    rmse = root_mean_squared_error(target, heartrate_imputed)
-    return rmse, df_inputed
+        if not grid:
+            MODELS[family] = factory[family]["builder"]({})
+            continue
 
-def reg_input(df):
+        keys = list(grid.keys())
+        values = list(grid.values())
 
-    df_inputed = df[['datetime', 'heartrate', 'target']].copy()
+        for combo in product(*values):
+            params = dict(zip(keys, combo))
 
-    model = preprocessing.StandardScaler() | linear_model.LinearRegression()
+            base_model = factory[family]["builder"](params)
 
-    target = df.loc[df['heartrate'].isna(), 'target'].tolist()
-    heartrate_imputed = []
+            name = family + "_" + "-".join(
+                f"{k}_{str(v).replace('.', '')}"
+                for k, v in params.items()
+            )
 
-    # for _, row in tqdm(df.iterrows(), total=len(df), desc="Imputing with regression"):
-    for _, row in df.iterrows():
-        x = {"hour": row['hour'], "minute": row['minute'], "second": row['second']}
-        y = row['heartrate']
+            MODELS[name] = base_model
 
-        if np.isnan(y):
-            y_pred = model.predict_one(x) or -1
-            heartrate_imputed.append(round(y_pred, 0))
-            # model.learn_one(x, round(y_pred, 1))
-
-        else:
-            model.learn_one(x, y)
-
-    rmse = root_mean_squared_error(target, heartrate_imputed)
-    df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
-    return rmse, df_inputed
+    return MODELS
 
 
-def mean_input(df):
 
-    df_inputed = df[['datetime', 'heartrate', 'target']].copy()
+MODELS = build_models(param_grid, MODEL_FACTORY)
 
-    model = stats.Mean()
 
-    heartrate_imputed = []
-    target = df.loc[df['heartrate'].isna(), 'target'].tolist()
-    # for _, row in tqdm(df.iterrows(), total=len(df), desc="Imputing with mean"):
-    for _, row in df.iterrows():
-        y = row['heartrate']
+# MODELS = {}    
+# MODELS['mean'] = MeanRegressor()
 
-        if np.isnan(y):
-            y_pred = model.get() or -1
-            heartrate_imputed.append(round(y_pred, 0))
-        else:
-            model.update(y)
-            # heartrate_imputed.append(y)
+# for opt, l2 in product(
+#     param_grid["reg"]["optimizer"],
+#     param_grid["reg"]["l2"],
+# ):
+#     name = (
+#         f"reg_"
+#         f"{opt}_"
+#         f"{str(l2)}"
+#     ).replace('.', '')
 
-    rmse = root_mean_squared_error(target, heartrate_imputed)
-    df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
-    return rmse, df_inputed
+#     MODELS[name] = (
+#         preprocessing.StandardScaler() |
+#         linear_model.LinearRegression(
+#             optimizer=optim.SGD(opt),
+#             l2=l2,
+#         )
+#     )
 
-def knn_input(df):
+# for gp, md in product(
+#     param_grid["tree"]["grace_period"],
+#     param_grid["tree"]["max_depth"],
+# ):
+#     name = (
+#         f"tree_"
+#         f"{gp}_"
+#         f"{md}"
+#     )
 
-    df_inputed = df[['datetime', 'heartrate', 'target']].copy()
+#     MODELS[name] = (
+#         preprocessing.StandardScaler() |
+#         tree.HoeffdingTreeRegressor(
+#             grace_period=gp,
+#             max_depth=md,
+#         )
+#     )   
 
-    # capture the true targets for rows where heartrate is missing
-    target = df.loc[df['heartrate'].isna(), 'target'].tolist()
-
-    model = neighbors.KNNRegressor(n_neighbors=5)
-
-    heartrate_imputed = []
-    # for _, row in tqdm(df.iterrows(), total=len(df), desc="Imputing with KNN"):
-    for _, row in df.iterrows():
-        x = {"hour": row['hour'], "minute": row['minute'], "second": row['second']}
-        y = row['heartrate']
-
-        if np.isnan(y):
-            y_pred = model.predict_one(x) or -1
-            heartrate_imputed.append(round(y_pred, 0))
-            # model.learn_one(x, round(y_pred, 1))
-
-        else:
-            model.learn_one(x, y)
-
-    df_inputed.loc[df_inputed['heartrate'].isna(), 'heartrate'] = heartrate_imputed
-    rmse = root_mean_squared_error(target, heartrate_imputed)
-    return rmse, df_inputed
-
-def run_imputer(imp_name, imp_func, df):
-    import time
-    start_time = time.time()
-    rmse, imp_df = imp_func(df)
-    elapsed = time.time() - start_time
-    # print(f"Imputer {imp_name} completed in {elapsed:.2f}")
-    return imp_name, rmse, elapsed, imp_df
-
-def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imputed):
-    """Função auxiliar que processa um único MR em um processo separado."""
-    local_result = {mr: {f"{imp}": 0 for imp in imputers}}
-    local_result[mr].update({f"t_{imp}": 0 for imp in imputers})
+def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
+    local_result = {mr: {f"{imp}": 0 for imp in MODELS.keys()}}
+    local_result[mr].update({f"t_{imp}": 0 for imp in MODELS.keys()})
 
     try:
         files_hr = [
@@ -178,46 +157,55 @@ def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imp
         if not files_hr:
             print(f"⚠️ Nenhum arquivo encontrado para {mr} em {pat}")
             return local_result
+        
+        # print(f"🔄 Processando {pat.rstrip('/').split('/')[-1]}")
 
         df = pd.read_csv(os.path.join(folder_path_m, files_hr[0]))
         first_valid_idx = df['heartrate'].first_valid_index()
         df = df.loc[first_valid_idx:].reset_index(drop=True)
-        # df = df.iloc[:20000]
+        df = df.iloc[:M_NUM]
+
+        df_imputed = df[['datetime', 'heartrate', 'target']][SPLIT:].copy()
+        df_imputed.reset_index(drop=True, inplace=True)
 
         df['datetime'] = pd.to_datetime(df['datetime'])
-        df['hour'] = df['datetime'].dt.hour
-        df['minute'] = df['datetime'].dt.minute
-        df['second'] = df['datetime'].dt.second
+        for feat in FEATURES:
+            df[feat] = df['datetime'].dt.__getattribute__(feat)
+        df.drop(columns=["datetime"], inplace=True)
 
-        imputers_list = [
-            ('mean', mean_input),
-            ('reg', reg_input),
-            ('mlp', mlp_input),
-            ('tree', tree_input)
-        ]
+        for imp_name, model in MODELS.items():
 
-        for name, func in imputers_list:
-            try:
-                imp_name, rmse, elapsed, imp_df = run_imputer(name, func, df.copy())
+            evals_oml, df_true_oml = eval_oml_imp_horizon(
+                model= model,
+                train=df.iloc[:SPLIT].copy(),
+                test=df.iloc[SPLIT:].copy(),
+                imp_column="heartrate",
+                target_column="target",
+                horizon=HORIZON,
+                include_remainder=True,
+                metric=root_mean_squared_error,
+                oml_grace_period=GRACE_PERIOD,
+            )
 
-                local_result[mr][imp_name] += rmse
-                local_result[mr][f"t_{imp_name}"] += elapsed
+            # print(f"✅ Processado {pat.rstrip('/').split('/')[-1]}")
 
-                path_imp = os.path.join(folder_path_imputed, f"{imp_name}")
-                os.makedirs(path_imp, exist_ok=True)
+            # print(evals_oml.loc[~evals_oml['Metric'].isna() & (evals_oml['Metric'] > 300) ,'Metric'])
 
-                imp_df.to_csv(
-                    os.path.join(
-                        path_imp,
-                        f"{pat.rstrip('/').split('/')[-1]}_hr_{mech}_{i}_{mr}_{imp_name}.csv"
-                    ),
-                    index=False
-                )
+            local_result[mr][imp_name] += evals_oml['Metric'].mean()
+            local_result[mr][f"t_{imp_name}"] += evals_oml['CompTime (s)'].sum()
 
-                print(f"✅ Processed {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i} | Imputer: {imp_name}")
+            path_imp = os.path.join(folder_path_imputed, f"{imp_name}")
+            os.makedirs(path_imp, exist_ok=True)
 
-            except Exception as e:
-                print(f"❌ Error running imputer {name} on {pat} | {mech} | {mr} | Dataset {i}: {e}")
+            df_imputed.loc[df_true_oml["Prediction"].index, 'heartrate'] = df_true_oml["Prediction"].values
+
+            df_imputed.to_csv(
+                os.path.join(
+                    path_imp,
+                    f"{pat.rstrip('/').split('/')[-1]}_hr_{mech}_{i}_{mr}_{imp_name}.csv"
+                ),
+                index=False
+            )
 
     except Exception as e:
         print(f"❌ Erro ao processar {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i} | Error: {e}")
@@ -227,6 +215,8 @@ def process_single_mr(mech, mr, i, pat, imputers, folder_path_m, folder_path_imp
 
 def process_mechanism(mech, num_datasets, mrs):
     local_results = {mech: {}}
+    patient_results = {mech: {}}        
+
 
     folder_path_m_base = os.path.join(
         os.path.dirname(__file__), 
@@ -238,13 +228,21 @@ def process_mechanism(mech, num_datasets, mrs):
         for name in os.listdir(folder_path_m_base)
         if os.path.isdir(os.path.join(folder_path_m_base, name))
     ]
-    patients = patients[:3]  # Limitar ao primeiro paciente
+    patients = [p for p in patients if p.rstrip('/').split('/')[-1] not in EXCLUDED_PATIENTS]
+    patients = patients[:P_NUM]  # Limitar ao primeiro paciente
+    # patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
+
 
     for i in range(1, num_datasets + 1):
         for pat in tqdm(patients, desc=f"Processing mechanism {mech}"):
+    
+            patient_id = pat.rstrip('/').split('/')[-1]
+            if patient_id not in patient_results[mech]:
+                patient_results[mech][patient_id] = {}
+
             folder_path_imputed = os.path.join(
                 os.path.dirname(__file__), 
-                f"../../Data/COVID-19-Wearables-Input/{mech}/{pat.rstrip('/').split('/')[-1]}/{i}/"
+                f"../../Data/COVID-19-Wearables-Input/{mech}/{patient_id}/{i}/"
             )
             os.makedirs(folder_path_imputed, exist_ok=True)
 
@@ -254,7 +252,7 @@ def process_mechanism(mech, num_datasets, mrs):
             with ProcessPoolExecutor() as executor:
                 futures = {
                     executor.submit(
-                        process_single_mr, mech, mr, i, pat, imputers, folder_path_m, folder_path_imputed
+                        process_single_mr, mech, mr, i, pat, folder_path_m, folder_path_imputed
                     ): mr for mr in mrs
                 }
 
@@ -263,6 +261,13 @@ def process_mechanism(mech, num_datasets, mrs):
                     mr = futures[future]
                     try:
                         result = future.result()
+
+                        if mr not in patient_results[mech][patient_id]:
+                            patient_results[mech][patient_id][mr] = {}
+
+                        for mr_key, mr_dict in result.items():
+                            patient_results[mech][patient_id][mr_key] = mr_dict.copy()
+
                         for mr_key, mr_dict in result.items():
                             if mr_key not in local_results[mech]:
                                 local_results[mech][mr_key] = mr_dict.copy()
@@ -275,50 +280,83 @@ def process_mechanism(mech, num_datasets, mrs):
 
     # --- Normalização ---
     for mr in local_results[mech]:
-        for imp in imputers:
+        for imp in MODELS.keys():
             # print(f"Acummulated {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][imp] /= len(patients) * num_datasets
             # print(f"Normalized {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][f"t_{imp}"] /= len(patients) * num_datasets
             # print()
 
-    return local_results
+    return {
+        "c": local_results,
+        "p": patient_results
+    }
 
 # ---- Execução principal ---- #
 if __name__ == "__main__":
-    mechanisms_batchs = [["MNAR_l", "MNAR_m","MNAR_h"],["MAR_l", "MAR_m", "MAR_h"],["MCAR"]]
-    # mechanisms_batchs = [["MCAR"]]
-    mrs = ["05", "10", "15", "20", "25"]
-    num_datasets = 1
 
     combined_results = {}
+    combined_pat_results = {}
 
     total_time_start = time.time()
 
-    for mechanisms in mechanisms_batchs:
+    for mechanisms in MEC_BATCHES:
         time_start = time.time()
         with ProcessPoolExecutor() as executor:
             futures = {
-                executor.submit(process_mechanism, mech, num_datasets, mrs): mech
+                executor.submit(process_mechanism, mech, N, MRS): mech
                 for mech in mechanisms
             }
             for future in as_completed(futures):
                 mech_name = futures[future]
                 try:
                     result = future.result()
-                    combined_results.update(result)
+
+                    combined = result["c"]
+                    per_patient = result["p"]
+                    combined_results.update(combined)
+
+                    if mech_name not in combined_pat_results:
+                        combined_pat_results[mech_name] = per_patient[mech_name]
+                    else:
+                        for pat in per_patient[mech_name]:
+                            combined_pat_results[mech_name][pat] = per_patient[mech_name][pat]
+
                 except Exception as e:
-                    print(f"\n❌ Erro ao processar {mech_name}: {e}")
+                     print(f"\n❌ Erro ao processar {mech_name}: {e}")
 
             time_elapsed = time.time() - time_start
             hours = time_elapsed / 3600
             print(f"\n⏱️ Tempo de execução para mecanismos {mechanisms}: {hours:.2f} horas")
 
-    # ---- Gera DataFrame final ---- #
+            # sys.exit()
+              
+            for met in param_grid.keys():
+                met_records = []  
+                for conf in MODELS.keys():
+                    for mech in combined_results:
+                        for mr in combined_results[mech]:
+                            if conf.startswith(met):
+                                rmse = combined_results[mech][mr][conf]
+                                time_comp = combined_results[mech][mr][f't_{conf}']
+                                met_records.append({
+                                    'mechanism': mech,
+                                    'missing_rate': mr,
+                                    'imputer': conf,
+                                    'rmse': round(rmse, 2),
+                                    'time': round(time_comp, 2)
+                                })
+
+                met_df = pd.DataFrame(met_records)
+                met_path = f'Analysis/imputation_results_{met}.csv'
+                if os.path.exists(met_path):
+                    os.remove(met_path)
+                met_df.to_csv(met_path, index=False)
+
             records = []
             for mech in combined_results:
                 for mr in combined_results[mech]:
-                    for imp in imputers:
+                    for imp in MODELS.keys():
                         records.append({
                             'mechanism': mech,
                             'missing_rate': mr,
@@ -332,9 +370,30 @@ if __name__ == "__main__":
             if os.path.exists(result_path):
                 os.remove(result_path)
             results_df.to_csv(result_path, index=False)
-            
+
+            pat_records = []
+            for mech in combined_pat_results:
+                for pat in combined_pat_results[mech]:
+                    for mr in combined_pat_results[mech][pat]:
+                        for imp in MODELS.keys():
+                            if imp in combined_pat_results[mech][pat][mr]:
+                                pat_records.append({
+                                    'mechanism': mech,
+                                    'patient': pat,
+                                    'missing_rate': mr,
+                                    'imputer': imp,
+                                    'rmse': round(combined_pat_results[mech][pat][mr][imp], 2),
+                                    'time': round(combined_pat_results[mech][pat][mr][f"t_{imp}"], 2)
+                                })
+
+            pat_df = pd.DataFrame(pat_records)
+            pat_path = f"Analysis/imputation_results_by_patient.csv"
+            if os.path.exists(pat_path):
+                os.remove(pat_path)
+            pat_df.to_csv(pat_path, index=False)
+
             critical = []
-            for imp in imputers:
+            for imp in MODELS.keys():
                 for mech in combined_results:
                     for mr in combined_results[mech]:
                         critical.append({
