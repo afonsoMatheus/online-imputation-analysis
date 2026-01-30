@@ -2,11 +2,6 @@ import numpy as np
 import pandas as pd
 from spotriver.evaluation.eval_bml import ResourceMonitor, evaluate_model, gen_sliding_window, gen_horizon_shifted_window
 from river import stream as river_stream
-from river import linear_model, preprocessing
-from sklearn.metrics import root_mean_squared_error
-from sklearn.linear_model import LinearRegression
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import StandardScaler
 from typing import Tuple
 from tqdm import tqdm
 
@@ -240,55 +235,60 @@ def eval_oml_imp_horizon(
         if rem > 0:
             test = test[:-rem]
 
-    # Fit the model on the train data, i.e., initial Training on Train Data.
-    # This is performed on a limited subset only (oml_grace_period).
-    # No predictions are made here, only the model is fitted.
-    # Memory and runtime are measured for the model fitting
-    train_X = train.loc[:, ~train.columns.isin([target_column, imp_column])]
-    train_y = train[imp_column]
-    train_X = train_X.tail(oml_grace_period)
-    train_y = train_y.tail(oml_grace_period)
-    rm = ResourceMonitor()
-    with rm:
-        try:
-            for xi, yi in tqdm(river_stream.iter_pandas(train_X, train_y), desc="Initial training on train data", total=len(train_X)):
-                # Before v0.19 we had to call predict_one before learn_one
-                # in order for the whole pipeline to be updated.
-                # Since v0.19, calling learn_one in a pipeline will update each part
-                # of the pipeline in turn.
-                # Before v0.19, predict_one has to be called for updating the unsupervised parts
-                # of the pipeline.
-                # The following line, which returns y_pred, which is not used after v0.19:
-                # _ = model.predict_one(xi)
-                # model = model.learn_one(xi, yi)
-                # Starting with 0.21.0, the learn_one and learn_many methods of each estimator don't not
-                # return anything anymore.
-                # This is to emphasize that the estimators are stateful.
-                if ~np.isnan(yi):
-                    model.learn_one(xi, yi)
-        except Exception as e:
-            print(f"train_X data: {train_X}")
-            print(f"train_y data: {train_y}")
-            print(f"An error occurred while fitting the model: {e}")
-
-    # Create empty lists to collect data
     eval_data = []
     series_preds = []
     series_diffs = []
 
-    # Measure the costs of the initial training:
-    # Add the evaluation of the model (memory and time, not predictions) on the train data to the eval_data list
-    # A metric must not be passed to the evaluate_model function, because no predictions are made here
-    # If a metric is passed, it will be ignored, because no predictions are passed to the evaluation function
-    # So, metric=None and metric=mean_absolute_error will both work
-    # Return res_dict = {"Metric": score, "Memory (MB)": memory, "CompTime (s)": r_time}
-    eval_data.append(
-        evaluate_model(y_true=np.array([]), y_pred=np.array([]), memory=rm.memory, r_time=rm.r_time, metric=metric)
-    )
+
+    # Fit the model on the train data, i.e., initial Training on Train Data.
+    # This is performed on a limited subset only (oml_grace_period).
+    # No predictions are made here, only the model is fitted.
+    # Memory and runtime are measured for the model fitting
+    if(not train.empty):
+        train_X = train.loc[:, ~train.columns.isin([target_column, imp_column])]
+        train_y = train[imp_column]
+        train_X = train_X.tail(oml_grace_period)
+        train_y = train_y.tail(oml_grace_period)
+        rm = ResourceMonitor()
+        with rm:
+            try:
+                # for xi, yi in tqdm(river_stream.iter_pandas(train_X, train_y), desc="Initial training on train data", total=len(train_X)):
+                for xi, yi in river_stream.iter_pandas(train_X, train_y):
+                    # Before v0.19 we had to call predict_one before learn_one
+                    # in order for the whole pipeline to be updated.
+                    # Since v0.19, calling learn_one in a pipeline will update each part
+                    # of the pipeline in turn.
+                    # Before v0.19, predict_one has to be called for updating the unsupervised parts
+                    # of the pipeline.
+                    # The following line, which returns y_pred, which is not used after v0.19:
+                    # _ = model.predict_one(xi)
+                    # model = model.learn_one(xi, yi)
+                    # Starting with 0.21.0, the learn_one and learn_many methods of each estimator don't not
+                    # return anything anymore.
+                    # This is to emphasize that the estimators are stateful.
+                    if ~np.isnan(yi):
+                        model.learn_one(xi, yi)
+            except Exception as e:
+                print(f"train_X data: {train_X}")
+                print(f"train_y data: {train_y}")
+                print(f"An error occurred while fitting the model: {e}")
+
+        # Create empty lists to collect data
+        
+        # Measure the costs of the initial training:
+        # Add the evaluation of the model (memory and time, not predictions) on the train data to the eval_data list
+        # A metric must not be passed to the evaluate_model function, because no predictions are made here
+        # If a metric is passed, it will be ignored, because no predictions are passed to the evaluation function
+        # So, metric=None and metric=mean_absolute_error will both work
+        # Return res_dict = {"Metric": score, "Memory (MB)": memory, "CompTime (s)": r_time}
+        eval_data.append(
+            evaluate_model(y_true=np.array([]), y_pred=np.array([]), memory=rm.memory, r_time=rm.r_time, metric=metric)
+        )
 
     # Test Data Evaluation
     # A sliding window of length horizon is used to evaluate the model on the test data
-    for i, new_df in tqdm(enumerate(gen_sliding_window(test, horizon)), desc="Evaluating data points", total=len(test)//horizon):
+    # for i, new_df in tqdm(enumerate(gen_sliding_window(test, horizon)), desc="Evaluating data points", total=len(test)//horizon):
+    for i, new_df in enumerate(gen_sliding_window(test, horizon)):
         preds = []
         nan_indexes = new_df[new_df[imp_column].isna()].index
         # if len(nan_indexes) == 0:
@@ -301,7 +301,9 @@ def eval_oml_imp_horizon(
                 for xi, yi in river_stream.iter_pandas(test_X, test_y):
                     if np.isnan(yi):
                         pred = model.predict_one(xi)
-                        preds.append(pred)
+                        preds.append(round(pred,0))
+                        # if pred > 300:
+                        #     print(i, xi, pred)
                     else:
                         model.learn_one(xi, yi)
             except Exception as e:
@@ -326,7 +328,8 @@ def eval_oml_imp_horizon(
 
     # Create DataFrames from the collected data
     df_eval = pd.DataFrame(eval_data)
-    df_true = pd.DataFrame(test[target_column][test[imp_column].isna()]).reset_index(drop=True)
+    
+    df_true = pd.DataFrame(test[target_column][test[imp_column].isna()])
     df_true["Prediction"] = series_preds
     df_true["Difference"] = series_diffs
     return df_eval, df_true

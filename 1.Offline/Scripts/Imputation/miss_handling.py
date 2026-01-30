@@ -5,20 +5,21 @@ import os
 from sklearn.metrics import root_mean_squared_error
 from tqdm import tqdm
 from itertools import product
-from river import stats, linear_model, preprocessing,  tree, forest, optim, utils
+from river import stats, linear_model, preprocessing,  tree, forest, optim, utils, neighbors, neural_net
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 from eval_bml_imp import eval_oml_imp_horizon
 import sys
 
-MEC_BATCHES = [["MCAR"], ["MAR_l", "MAR_m", "MAR_h"], ["MNAR_l", "MNAR_m", "MNAR_h"]]
+MEC_BATCHES = [["MCAR"]]
+# MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
 MRS = ["05", "10", "15", "20", "25"]
 N = 1
-P_NUM = 30
-M_NUM = 12000000000
+P_NUM = 10
+M_NUM = 120000000000
 
 SPLIT = 0
-HORIZON = 10000000
+HORIZON = 1
 GRACE_PERIOD = 0
 OBSERVED_PATIENTS = ['AOYM4KG', 'APGIB2T']
 EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
@@ -42,12 +43,32 @@ class MeanRegressor:
 param_grid = {
     "mean": {},
     "reg": {
-        'opt': [0.01, 0.001, 0.0001],
+        'opt': [0.0001],
         # 'l2': [0.0, 1e-5, 1e-4],
     },
     "tree": {
-        'gp': [1000, 10000, 100000],
+        'gp': [10000],
         # 'md': [5, 10, 15]
+    },
+    # "knn": {
+    #     'k': [10],
+    # },
+    "tree_ad": {
+        'gp': [10000],
+        # 'md': [5, 10, 15]
+    },
+    "mlp": {
+        'opt': [0.01],
+        # 'arq': [ 
+        #     # ((3,3), (neural_net.activations.ReLU,
+        #     #         neural_net.activations.ReLU,
+        #     #         neural_net.activations.ReLU,
+        #     #         neural_net.activations.Identity)),
+        #     ((3,3,3), (neural_net.activations.ReLU,
+        #             neural_net.activations.ReLU,
+        #             neural_net.activations.ReLU,
+        #             neural_net.activations.Identity)),
+        # ],
     }
 }
     
@@ -72,6 +93,38 @@ MODEL_FACTORY = {
                 max_depth=params.get("md", None)
             )
         )
+    },
+    # "knn": {
+    #     "builder": lambda params: (
+    #         preprocessing.StandardScaler() |
+    #         neighbors.KNNRegressor(
+    #             n_neighbors=params["k"],
+    #         )
+    #     )
+    # },
+    "tree_ad": {
+        "builder": lambda params: (
+            preprocessing.StandardScaler() |
+            tree.HoeffdingAdaptiveTreeRegressor(
+                grace_period=params["gp"],
+                max_depth=params.get("md", None),
+                seed=SEED,
+            )
+        )
+    },
+    "mlp": {
+        "builder": lambda params: (
+            preprocessing.StandardScaler() |
+            neural_net.MLPRegressor(
+                optimizer=optim.SGD(params.get("opt", 0.01)),
+                hidden_dims=params.get("arq", ((3,3,3),))[0],
+                activations=params.get("arq", ((3,3,3), (neural_net.activations.ReLU,
+                    neural_net.activations.ReLU,
+                    neural_net.activations.ReLU,
+                    neural_net.activations.Identity)))[1],
+                seed = SEED,
+            )
+        )
     }
 }
 
@@ -93,7 +146,8 @@ def build_models(param_grid, factory):
             base_model = factory[family]["builder"](params)
 
             name = family + "_" + "-".join(
-                f"{k}_{str(v).replace('.', '')}"
+                f"{k}_{str(v).replace('.', '')}" if k != 'arq' 
+                else f"{k}_{str(v[0]).replace('.', '')}"
                 for k, v in params.items()
             )
 
@@ -101,53 +155,13 @@ def build_models(param_grid, factory):
 
     return MODELS
 
-
-
 MODELS = build_models(param_grid, MODEL_FACTORY)
-
-
-# MODELS = {}    
-# MODELS['mean'] = MeanRegressor()
-
-# for opt, l2 in product(
-#     param_grid["reg"]["optimizer"],
-#     param_grid["reg"]["l2"],
-# ):
-#     name = (
-#         f"reg_"
-#         f"{opt}_"
-#         f"{str(l2)}"
-#     ).replace('.', '')
-
-#     MODELS[name] = (
-#         preprocessing.StandardScaler() |
-#         linear_model.LinearRegression(
-#             optimizer=optim.SGD(opt),
-#             l2=l2,
-#         )
-#     )
-
-# for gp, md in product(
-#     param_grid["tree"]["grace_period"],
-#     param_grid["tree"]["max_depth"],
-# ):
-#     name = (
-#         f"tree_"
-#         f"{gp}_"
-#         f"{md}"
-#     )
-
-#     MODELS[name] = (
-#         preprocessing.StandardScaler() |
-#         tree.HoeffdingTreeRegressor(
-#             grace_period=gp,
-#             max_depth=md,
-#         )
-#     )   
 
 def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
     local_result = {mr: {f"{imp}": 0 for imp in MODELS.keys()}}
     local_result[mr].update({f"t_{imp}": 0 for imp in MODELS.keys()})
+    local_result[mr].update({f"it_{imp}": 0 for imp in MODELS.keys()})
+    local_result[mr].update({f"m_{imp}": 0 for imp in MODELS.keys()})
 
     try:
         files_hr = [
@@ -173,39 +187,47 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
             df[feat] = df['datetime'].dt.__getattribute__(feat)
         df.drop(columns=["datetime"], inplace=True)
 
-        for imp_name, model in MODELS.items():
+        # Create a copy of df for each model to avoid shared state issues
+        models_to_process = list(MODELS.items())
 
-            evals_oml, df_true_oml = eval_oml_imp_horizon(
-                model= model,
-                train=df.iloc[:SPLIT].copy(),
-                test=df.iloc[SPLIT:].copy(),
-                imp_column="heartrate",
-                target_column="target",
-                horizon=HORIZON,
-                include_remainder=True,
-                metric=root_mean_squared_error,
-                oml_grace_period=GRACE_PERIOD,
-            )
+        # Process models in parallel
+        with ProcessPoolExecutor() as executor:
+            futures = {}
+            for imp_name, model in models_to_process:
+                futures[executor.submit(
+                    eval_oml_imp_horizon,
+                    model=model,
+                    train=df.iloc[:SPLIT].copy(),
+                    test=df.iloc[SPLIT:].copy(),
+                    imp_column="heartrate",
+                    target_column="target",
+                    horizon=HORIZON,
+                    include_remainder=True,
+                    metric=root_mean_squared_error,
+                    oml_grace_period=GRACE_PERIOD,
+                )] = imp_name
 
-            # print(f"✅ Processado {pat.rstrip('/').split('/')[-1]}")
+            for future in as_completed(futures):
+                imp_name = futures[future]
+                evals_oml, df_true_oml = future.result()
 
-            # print(evals_oml.loc[~evals_oml['Metric'].isna() & (evals_oml['Metric'] > 300) ,'Metric'])
+                local_result[mr][imp_name] += evals_oml['Metric'].mean()
+                local_result[mr][f"t_{imp_name}"] += evals_oml['CompTime (s)'].sum()
+                local_result[mr][f"it_{imp_name}"] = evals_oml['CompTime (s)'].mean()
+                local_result[mr][f"m_{imp_name}"] += evals_oml['Memory (MB)'].sum()
 
-            local_result[mr][imp_name] += evals_oml['Metric'].mean()
-            local_result[mr][f"t_{imp_name}"] += evals_oml['CompTime (s)'].sum()
+                path_imp = os.path.join(folder_path_imputed, f"{imp_name}")
+                os.makedirs(path_imp, exist_ok=True)
 
-            path_imp = os.path.join(folder_path_imputed, f"{imp_name}")
-            os.makedirs(path_imp, exist_ok=True)
+                df_imputed.loc[df_true_oml["Prediction"].index, 'heartrate'] = df_true_oml["Prediction"].values
 
-            df_imputed.loc[df_true_oml["Prediction"].index, 'heartrate'] = df_true_oml["Prediction"].values
-
-            df_imputed.to_csv(
-                os.path.join(
-                    path_imp,
-                    f"{pat.rstrip('/').split('/')[-1]}_hr_{mech}_{i}_{mr}_{imp_name}.csv"
-                ),
-                index=False
-            )
+                df_imputed.to_csv(
+                    os.path.join(
+                        path_imp,
+                        f"{pat.rstrip('/').split('/')[-1]}_hr_{mech}_{i}_{mr}_{imp_name}.csv"
+                    ),
+                    index=False
+                )
 
     except Exception as e:
         print(f"❌ Erro ao processar {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i} | Error: {e}")
@@ -285,6 +307,8 @@ def process_mechanism(mech, num_datasets, mrs):
             local_results[mech][mr][imp] /= len(patients) * num_datasets
             # print(f"Normalized {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][f"t_{imp}"] /= len(patients) * num_datasets
+            local_results[mech][mr][f"it_{imp}"] /= len(patients) * num_datasets
+            local_results[mech][mr][f"m_{imp}"] /= len(patients) * num_datasets
             # print()
 
     return {
@@ -331,27 +355,31 @@ if __name__ == "__main__":
 
             # sys.exit()
               
-            for met in param_grid.keys():
-                met_records = []  
-                for conf in MODELS.keys():
-                    for mech in combined_results:
-                        for mr in combined_results[mech]:
-                            if conf.startswith(met):
-                                rmse = combined_results[mech][mr][conf]
-                                time_comp = combined_results[mech][mr][f't_{conf}']
-                                met_records.append({
-                                    'mechanism': mech,
-                                    'missing_rate': mr,
-                                    'imputer': conf,
-                                    'rmse': round(rmse, 2),
-                                    'time': round(time_comp, 2)
-                                })
+            # for met in param_grid.keys():
+            #     met_records = []  
+            #     for conf in MODELS.keys():
+            #         for mech in combined_results:
+            #             for mr in combined_results[mech]:
+            #                 if conf.startswith(met):
+            #                     rmse = combined_results[mech][mr][conf]
+            #                     time_comp = combined_results[mech][mr][f't_{conf}']
+            #                     it_time_comp = combined_results[mech][mr][f'it_{conf}']
+            #                     m_comp = combined_results[mech][mr][f'm_{conf}']
+            #                     met_records.append({
+            #                         'mechanism': mech,
+            #                         'missing_rate': mr,
+            #                         'imputer': conf,
+            #                         'rmse': round(rmse, 2),
+            #                         'ac_time': round(time_comp, 2),
+            #                         'it_time': round(it_time_comp, 4),
+            #                         'memory': round(m_comp, 2)
+            #                     })
 
-                met_df = pd.DataFrame(met_records)
-                met_path = f'Analysis/imputation_results_{met}.csv'
-                if os.path.exists(met_path):
-                    os.remove(met_path)
-                met_df.to_csv(met_path, index=False)
+            #     met_df = pd.DataFrame(met_records)
+            #     met_path = f'Analysis/imputation_results_{met}.csv'
+            #     if os.path.exists(met_path):
+            #         os.remove(met_path)
+            #     met_df.to_csv(met_path, index=False)
 
             records = []
             for mech in combined_results:
@@ -362,7 +390,9 @@ if __name__ == "__main__":
                             'missing_rate': mr,
                             'imputer': imp,
                             'rmse': round(combined_results[mech][mr][imp], 2),
-                            'time': round(combined_results[mech][mr][f't_{imp}'], 2)
+                            'ac_time': round(combined_results[mech][mr][f't_{imp}'], 2),
+                            'it_time': round(combined_results[mech][mr][f'it_{imp}'], 4),
+                            'memory': round(combined_results[mech][mr][f'm_{imp}'], 2)
                         })
 
             results_df = pd.DataFrame(records)
@@ -383,7 +413,9 @@ if __name__ == "__main__":
                                     'missing_rate': mr,
                                     'imputer': imp,
                                     'rmse': round(combined_pat_results[mech][pat][mr][imp], 2),
-                                    'time': round(combined_pat_results[mech][pat][mr][f"t_{imp}"], 2)
+                                    'ac_time': round(combined_pat_results[mech][pat][mr][f"t_{imp}"], 2),
+                                    'it_time': round(combined_pat_results[mech][pat][mr][f"it_{imp}"], 4),
+                                    'memory': round(combined_pat_results[mech][pat][mr][f"m_{imp}"], 2)
                                 })
 
             pat_df = pd.DataFrame(pat_records)
@@ -403,7 +435,7 @@ if __name__ == "__main__":
                         })
 
             critical_df = pd.DataFrame(critical)
-            critical_path = f'CD_Diagram/imputation_critical.csv'
+            critical_path = f'Analysis/CD_Diagram/imputation_critical.csv'
             if os.path.exists(critical_path):
                 os.remove(critical_path)
             critical_df.to_csv(critical_path, index=False)
