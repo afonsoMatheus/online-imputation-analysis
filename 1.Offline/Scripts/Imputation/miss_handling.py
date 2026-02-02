@@ -15,13 +15,13 @@ MEC_BATCHES = [["MCAR"]]
 # MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
 MRS = ["05", "10", "15", "20", "25"]
 N = 1
-P_NUM = 10
+P_NUM = 30
 M_NUM = 120000000000
 
 SPLIT = 0
 HORIZON = 1
 GRACE_PERIOD = 0
-OBSERVED_PATIENTS = ['AOYM4KG', 'APGIB2T']
+OBSERVED_PATIENTS = ['A36HR6Y']
 EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
 FEATURES = ['hour', 'minute']  #second make patients 'AOYM4KG', 'APGIB2T' break in linear regression
 
@@ -41,24 +41,24 @@ class MeanRegressor:
         return self.mean.get()
     
 param_grid = {
-    "mean": {},
-    "reg": {
-        'opt': [0.0001],
-        # 'l2': [0.0, 1e-5, 1e-4],
-    },
-    "tree": {
-        'gp': [10000],
-        # 'md': [5, 10, 15]
-    },
-    # "knn": {
-    #     'k': [10],
+    # "mean": {},
+    # "reg": {
+    #     'opt': [0.0001],
+    #     # 'l2': [0.0, 1e-5, 1e-4],
     # },
-    "tree_ad": {
-        'gp': [10000],
-        # 'md': [5, 10, 15]
-    },
+    # "tree": {
+    #     'gp': [10000],
+    #     # 'md': [5, 10, 15]
+    # },
+    # # "knn": {
+    # #     'k': [10],
+    # # },
+    # "tree_ad": {
+    #     'gp': [10000],
+    #     # 'md': [5, 10, 15]
+    # },
     "mlp": {
-        'opt': [0.01],
+        'opt': [0.01, 0.001, 0.0001],
         # 'arq': [ 
         #     # ((3,3), (neural_net.activations.ReLU,
         #     #         neural_net.activations.ReLU,
@@ -162,6 +162,7 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
     local_result[mr].update({f"t_{imp}": 0 for imp in MODELS.keys()})
     local_result[mr].update({f"it_{imp}": 0 for imp in MODELS.keys()})
     local_result[mr].update({f"m_{imp}": 0 for imp in MODELS.keys()})
+    local_result[mr].update({f"med_{imp}": 0 for imp in MODELS.keys()})
 
     try:
         files_hr = [
@@ -212,6 +213,7 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
                 evals_oml, df_true_oml = future.result()
 
                 local_result[mr][imp_name] += evals_oml['Metric'].mean()
+                local_result[mr][f"med_{imp_name}"] += evals_oml['Metric'].median()
                 local_result[mr][f"t_{imp_name}"] += evals_oml['CompTime (s)'].sum()
                 local_result[mr][f"it_{imp_name}"] = evals_oml['CompTime (s)'].mean()
                 local_result[mr][f"m_{imp_name}"] += evals_oml['Memory (MB)'].sum()
@@ -252,7 +254,7 @@ def process_mechanism(mech, num_datasets, mrs):
     ]
     patients = [p for p in patients if p.rstrip('/').split('/')[-1] not in EXCLUDED_PATIENTS]
     patients = patients[:P_NUM]  # Limitar ao primeiro paciente
-    # patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
+    patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
 
 
     for i in range(1, num_datasets + 1):
@@ -305,6 +307,7 @@ def process_mechanism(mech, num_datasets, mrs):
         for imp in MODELS.keys():
             # print(f"Acummulated {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][imp] /= len(patients) * num_datasets
+            local_results[mech][mr][f"med_{imp}"] /= len(patients) * num_datasets
             # print(f"Normalized {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][f"t_{imp}"] /= len(patients) * num_datasets
             local_results[mech][mr][f"it_{imp}"] /= len(patients) * num_datasets
@@ -389,7 +392,8 @@ if __name__ == "__main__":
                             'mechanism': mech,
                             'missing_rate': mr,
                             'imputer': imp,
-                            'rmse': round(combined_results[mech][mr][imp], 2),
+                            'mean_rmse': round(combined_results[mech][mr][imp], 2),
+                            'med_rmse': round(combined_results[mech][mr][f"med_{imp}"], 2),
                             'ac_time': round(combined_results[mech][mr][f't_{imp}'], 2),
                             'it_time': round(combined_results[mech][mr][f'it_{imp}'], 4),
                             'memory': round(combined_results[mech][mr][f'm_{imp}'], 2)
@@ -412,7 +416,8 @@ if __name__ == "__main__":
                                     'patient': pat,
                                     'missing_rate': mr,
                                     'imputer': imp,
-                                    'rmse': round(combined_pat_results[mech][pat][mr][imp], 2),
+                                    'mean_rmse': round(combined_pat_results[mech][pat][mr][imp], 2),
+                                    'med_rmse': round(combined_pat_results[mech][pat][mr][f"med_{imp}"], 2),
                                     'ac_time': round(combined_pat_results[mech][pat][mr][f"t_{imp}"], 2),
                                     'it_time': round(combined_pat_results[mech][pat][mr][f"it_{imp}"], 4),
                                     'memory': round(combined_pat_results[mech][pat][mr][f"m_{imp}"], 2)
