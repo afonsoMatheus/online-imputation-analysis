@@ -10,13 +10,17 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 from eval_bml_imp import eval_oml_imp_horizon
 import sys
+import argparse
+from spotriver.evaluation.eval_bml import plot_bml_oml_horizon_metrics
 
+#ssh virtual-man-dos "/home/afonso/Desenvolvimento/Wearables-Assurance/run_imputation.sh"
+alias = "MCAR"
 MEC_BATCHES = [["MCAR"]]
 # MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
 MRS = ["05", "10", "15", "20", "25"]
 N = 1
 P_NUM = 30
-M_NUM = 120000000000
+M_NUM = 12000000000000
 
 SPLIT = 0
 HORIZON = 1
@@ -41,24 +45,24 @@ class MeanRegressor:
         return self.mean.get()
     
 param_grid = {
-    # "mean": {},
-    # "reg": {
-    #     'opt': [0.0001],
-    #     # 'l2': [0.0, 1e-5, 1e-4],
+    "mean": {},
+    "reg": {
+        'opt': [0.0001],
+        # 'l2': [0.0, 1e-5, 1e-4],
+    },
+    "tree": {
+        'gp': [10000],
+        # 'md': [5, 10, 15]
+    },
+    # "knn": {
+    #     'k': [10],
     # },
-    # "tree": {
-    #     'gp': [10000],
-    #     # 'md': [5, 10, 15]
-    # },
-    # # "knn": {
-    # #     'k': [10],
-    # # },
-    # "tree_ad": {
-    #     'gp': [10000],
-    #     # 'md': [5, 10, 15]
-    # },
+    "tree_ad": {
+        'gp': [10000],
+        # 'md': [5, 10, 15]
+    },
     "mlp": {
-        'opt': [0.01, 0.001, 0.0001],
+        'opt': [0.001],
         # 'arq': [ 
         #     # ((3,3), (neural_net.activations.ReLU,
         #     #         neural_net.activations.ReLU,
@@ -188,6 +192,8 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
             df[feat] = df['datetime'].dt.__getattribute__(feat)
         df.drop(columns=["datetime"], inplace=True)
 
+        pat_evals = {}
+
         # Create a copy of df for each model to avoid shared state issues
         models_to_process = list(MODELS.items())
 
@@ -211,6 +217,8 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
             for future in as_completed(futures):
                 imp_name = futures[future]
                 evals_oml, df_true_oml = future.result()
+                
+                pat_evals[imp_name] = evals_oml
 
                 local_result[mr][imp_name] += evals_oml['Metric'].mean()
                 local_result[mr][f"med_{imp_name}"] += evals_oml['Metric'].median()
@@ -234,7 +242,7 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
     except Exception as e:
         print(f"❌ Erro ao processar {pat.rstrip('/').split('/')[-1]} | Mechanism: {mech} | MR: {mr} | Dataset: {i} | Error: {e}")
 
-    return local_result
+    return local_result, pat_evals
 
 
 def process_mechanism(mech, num_datasets, mrs):
@@ -254,8 +262,7 @@ def process_mechanism(mech, num_datasets, mrs):
     ]
     patients = [p for p in patients if p.rstrip('/').split('/')[-1] not in EXCLUDED_PATIENTS]
     patients = patients[:P_NUM]  # Limitar ao primeiro paciente
-    patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
-
+    # patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
 
     for i in range(1, num_datasets + 1):
         for pat in tqdm(patients, desc=f"Processing mechanism {mech}"):
@@ -286,13 +293,24 @@ def process_mechanism(mech, num_datasets, mrs):
                     try:
                         result = future.result()
 
+                        if i == 1 and mr == "15":
+                            if result[1]:
+                                df_labels = list(result[1].keys())
+                                df_labels = [label.split('_')[0] for label in df_labels]
+                                evals_list = [evals for evals in result[1].values()]
+                                for ev in evals_list:
+                                    ev.dropna(inplace=True)
+                                    ev.reset_index(drop=True, inplace=True)
+
+                                # plot_bml_oml_horizon_metrics(evals_list, df_labels, metric=root_mean_squared_error, filename=f"oml_{patient_id}_{mech}.png")
+
                         if mr not in patient_results[mech][patient_id]:
                             patient_results[mech][patient_id][mr] = {}
 
-                        for mr_key, mr_dict in result.items():
+                        for mr_key, mr_dict in result[0].items():
                             patient_results[mech][patient_id][mr_key] = mr_dict.copy()
 
-                        for mr_key, mr_dict in result.items():
+                        for mr_key, mr_dict in result[0].items():
                             if mr_key not in local_results[mech]:
                                 local_results[mech][mr_key] = mr_dict.copy()
                             else:
@@ -400,10 +418,10 @@ if __name__ == "__main__":
                         })
 
             results_df = pd.DataFrame(records)
-            result_path = f'Analysis/imputation_results.csv'
+            result_path = f'Analysis/imputation_results_{alias}.csv'
             if os.path.exists(result_path):
                 os.remove(result_path)
-            results_df.to_csv(result_path, index=False)
+            # results_df.to_csv(result_path, index=False)
 
             pat_records = []
             for mech in combined_pat_results:
@@ -424,10 +442,10 @@ if __name__ == "__main__":
                                 })
 
             pat_df = pd.DataFrame(pat_records)
-            pat_path = f"Analysis/imputation_results_by_patient.csv"
+            pat_path = f"Analysis/imputation_results_by_patient_{alias}.csv"
             if os.path.exists(pat_path):
                 os.remove(pat_path)
-            pat_df.to_csv(pat_path, index=False)
+            # pat_df.to_csv(pat_path, index=False)
 
             critical = []
             for imp in MODELS.keys():
@@ -440,10 +458,10 @@ if __name__ == "__main__":
                         })
 
             critical_df = pd.DataFrame(critical)
-            critical_path = f'Analysis/CD_Diagram/imputation_critical.csv'
+            critical_path = f'Analysis/CD_Diagram/imputation_critical_{alias}.csv'
             if os.path.exists(critical_path):
                 os.remove(critical_path)
-            critical_df.to_csv(critical_path, index=False)
+            # critical_df.to_csv(critical_path, index=False)
 
     total_time_elapsed = time.time() - total_time_start
     hours = total_time_elapsed / 3600

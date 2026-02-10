@@ -15,15 +15,6 @@ MRS = ["05", "10", "15", "20", "25"]
 
 if __name__ == "__main__":
 
-    # sym_dates_path = os.path.join(os.path.dirname(__file__), "../../Results/sym-dates.csv")
-    # symptom_dates = {}
-    # with open(sym_dates_path, 'r') as f:
-    #     next(f)  # Skip header
-    #     for line in f:
-    #         parts = line.strip().split(',')
-    #         if len(parts) >= 2:
-    #             symptom_dates[parts[0]] = parts[1]
-
     folder_path_c = os.path.join(os.path.dirname(__file__), "../../Data/COVID-19-Wearables")
     files_st = [f for f in os.listdir(folder_path_c) if f.endswith("_steps.csv")]
     threshold_contamination_path = os.path.join(os.path.dirname(__file__),"../../Data/thresh_cont.csv")
@@ -46,9 +37,6 @@ if __name__ == "__main__":
                         if os.path.isdir(os.path.join(folder_path_m_base, name))
                         and name not in EXCLUDED_PATIENTS]
             for pat in tqdm(patients, desc=f"Processing mechanism {mech}"):
-                if pat.split('/')[-1] in EXCLUDED_PATIENTS:
-                    print(f"Skipping excluded patient {pat.split('/')[-1]}")
-                    continue
                 # for mr in tqdm(MRS, desc = f"Processing {pat.split('/')[-1]}"):
                 for mr in MRS: 
                     folder_path_m = f"{pat}/{i}"
@@ -139,8 +127,6 @@ if __name__ == "__main__":
                     if f.endswith(f"_hr.csv") and not any(excl in f for excl in EXCLUDED_PATIENTS)]
         for file_hr in tqdm(files_hr, desc="Processing patients"):
             myphd_id = file_hr.split('_')[0]
-            if myphd_id in EXCLUDED_PATIENTS:
-                continue
             matching_steps = [f for f in files_st if f.startswith(myphd_id)]
             files_hr = [f for f in os.listdir(folder_path_c) if f.endswith(f"_hr.csv")]
 
