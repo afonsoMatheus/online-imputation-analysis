@@ -5,21 +5,19 @@ import os
 from sklearn.metrics import root_mean_squared_error
 from tqdm import tqdm
 from itertools import product
-from river import stats, linear_model, preprocessing,  tree, forest, optim, utils, neighbors, neural_net
+from river import stats, linear_model, preprocessing,  tree, optim, neural_net
 from concurrent.futures import ProcessPoolExecutor, as_completed
 import time
 from eval_bml_imp import eval_oml_imp_horizon
-import sys
-import argparse
 from spotriver.evaluation.eval_bml import plot_bml_oml_horizon_metrics
 
 #ssh virtual-man-dos "/home/afonso/Desenvolvimento/Wearables-Assurance/run_imputation.sh"
-alias = "MCAR"
-MEC_BATCHES = [["MCAR"]]
-# MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
+alias = "HAT"
+# MEC_BATCHES = [["MCAR"]]
+MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
 MRS = ["05", "10", "15", "20", "25"]
 N = 1
-P_NUM = 30
+P_NUM = 5
 M_NUM = 12000000000000
 
 SPLIT = 0
@@ -54,13 +52,14 @@ param_grid = {
         'gp': [10000],
         # 'md': [5, 10, 15]
     },
-    # "knn": {
-    #     'k': [10],
+    # # "knn": {
+    # #     'k': [10],
+    # # },
+    # "tree-ad": {
+    #     'gp': [5000, 10000],
+    #     'dw': [1000, 30000]
+    #     # 'md': [5, 10, 15]
     # },
-    "tree_ad": {
-        'gp': [10000],
-        # 'md': [5, 10, 15]
-    },
     "mlp": {
         'opt': [0.001],
         # 'arq': [ 
@@ -106,12 +105,13 @@ MODEL_FACTORY = {
     #         )
     #     )
     # },
-    "tree_ad": {
+    "tree-ad": {
         "builder": lambda params: (
             preprocessing.StandardScaler() |
             tree.HoeffdingAdaptiveTreeRegressor(
                 grace_period=params["gp"],
                 max_depth=params.get("md", None),
+                drift_window_threshold=params.get("dw", 0.95),
                 seed=SEED,
             )
         )
@@ -177,8 +177,6 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
             print(f"⚠️ Nenhum arquivo encontrado para {mr} em {pat}")
             return local_result
         
-        # print(f"🔄 Processando {pat.rstrip('/').split('/')[-1]}")
-
         df = pd.read_csv(os.path.join(folder_path_m, files_hr[0]))
         first_valid_idx = df['heartrate'].first_valid_index()
         df = df.loc[first_valid_idx:].reset_index(drop=True)
@@ -194,10 +192,8 @@ def process_single_mr(mech, mr, i, pat, folder_path_m, folder_path_imputed):
 
         pat_evals = {}
 
-        # Create a copy of df for each model to avoid shared state issues
         models_to_process = list(MODELS.items())
 
-        # Process models in parallel
         with ProcessPoolExecutor() as executor:
             futures = {}
             for imp_name, model in models_to_process:
@@ -261,7 +257,7 @@ def process_mechanism(mech, num_datasets, mrs):
         if os.path.isdir(os.path.join(folder_path_m_base, name))
     ]
     patients = [p for p in patients if p.rstrip('/').split('/')[-1] not in EXCLUDED_PATIENTS]
-    patients = patients[:P_NUM]  # Limitar ao primeiro paciente
+    patients = patients[:P_NUM]  
     # patients = [p for p in patients if p.rstrip('/').split('/')[-1] in OBSERVED_PATIENTS]
 
     for i in range(1, num_datasets + 1):
@@ -279,7 +275,6 @@ def process_mechanism(mech, num_datasets, mrs):
 
             folder_path_m = f"{pat}/{i}"
 
-            # ⚡ Executa cada MR em paralelo
             with ProcessPoolExecutor() as executor:
                 futures = {
                     executor.submit(
@@ -287,7 +282,6 @@ def process_mechanism(mech, num_datasets, mrs):
                     ): mr for mr in mrs
                 }
 
-                # for future in tqdm(as_completed(futures), total=len(futures), desc="MRs completed", leave=False):
                 for future in as_completed(futures):
                     mr = futures[future]
                     try:
@@ -323,25 +317,23 @@ def process_mechanism(mech, num_datasets, mrs):
     # --- Normalização ---
     for mr in local_results[mech]:
         for imp in MODELS.keys():
-            # print(f"Acummulated {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][imp] /= len(patients) * num_datasets
             local_results[mech][mr][f"med_{imp}"] /= len(patients) * num_datasets
-            # print(f"Normalized {mech} | {mr} | {imp}: {local_results[mech][mr][imp]}")
             local_results[mech][mr][f"t_{imp}"] /= len(patients) * num_datasets
             local_results[mech][mr][f"it_{imp}"] /= len(patients) * num_datasets
             local_results[mech][mr][f"m_{imp}"] /= len(patients) * num_datasets
-            # print()
 
     return {
         "c": local_results,
         "p": patient_results
     }
 
-# ---- Execução principal ---- #
 if __name__ == "__main__":
 
     combined_results = {}
     combined_pat_results = {}
+
+    print(f"🚀 Iniciando processamento para mecanismos: {MEC_BATCHES} | Missing Rates: {MRS} | Datasets por paciente: {N} | Pacientes: {P_NUM}")
 
     total_time_start = time.time()
 
@@ -374,34 +366,6 @@ if __name__ == "__main__":
             hours = time_elapsed / 3600
             print(f"\n⏱️ Tempo de execução para mecanismos {mechanisms}: {hours:.2f} horas")
 
-            # sys.exit()
-              
-            # for met in param_grid.keys():
-            #     met_records = []  
-            #     for conf in MODELS.keys():
-            #         for mech in combined_results:
-            #             for mr in combined_results[mech]:
-            #                 if conf.startswith(met):
-            #                     rmse = combined_results[mech][mr][conf]
-            #                     time_comp = combined_results[mech][mr][f't_{conf}']
-            #                     it_time_comp = combined_results[mech][mr][f'it_{conf}']
-            #                     m_comp = combined_results[mech][mr][f'm_{conf}']
-            #                     met_records.append({
-            #                         'mechanism': mech,
-            #                         'missing_rate': mr,
-            #                         'imputer': conf,
-            #                         'rmse': round(rmse, 2),
-            #                         'ac_time': round(time_comp, 2),
-            #                         'it_time': round(it_time_comp, 4),
-            #                         'memory': round(m_comp, 2)
-            #                     })
-
-            #     met_df = pd.DataFrame(met_records)
-            #     met_path = f'Analysis/imputation_results_{met}.csv'
-            #     if os.path.exists(met_path):
-            #         os.remove(met_path)
-            #     met_df.to_csv(met_path, index=False)
-
             records = []
             for mech in combined_results:
                 for mr in combined_results[mech]:
@@ -421,7 +385,7 @@ if __name__ == "__main__":
             result_path = f'Analysis/imputation_results_{alias}.csv'
             if os.path.exists(result_path):
                 os.remove(result_path)
-            # results_df.to_csv(result_path, index=False)
+            results_df.to_csv(result_path, index=False)
 
             pat_records = []
             for mech in combined_pat_results:
@@ -445,23 +409,7 @@ if __name__ == "__main__":
             pat_path = f"Analysis/imputation_results_by_patient_{alias}.csv"
             if os.path.exists(pat_path):
                 os.remove(pat_path)
-            # pat_df.to_csv(pat_path, index=False)
-
-            critical = []
-            for imp in MODELS.keys():
-                for mech in combined_results:
-                    for mr in combined_results[mech]:
-                        critical.append({
-                            'classifier_name': imp,
-                            'dataset_name': f"{mech}_{mr}",
-                            'accuracy': combined_results[mech][mr][imp]
-                        })
-
-            critical_df = pd.DataFrame(critical)
-            critical_path = f'Analysis/CD_Diagram/imputation_critical_{alias}.csv'
-            if os.path.exists(critical_path):
-                os.remove(critical_path)
-            # critical_df.to_csv(critical_path, index=False)
+            pat_df.to_csv(pat_path, index=False)
 
     total_time_elapsed = time.time() - total_time_start
     hours = total_time_elapsed / 3600

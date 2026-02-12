@@ -11,7 +11,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Utilizar Python 3.6.15
 # MECHANISMS = ["MCAR", "MAR_l", "MAR_m", "MAR_h", "MNAR_l", "MNAR_m", "MNAR_h"]
-MECHANISMS = [["MAR_l"], ["MAR_m"], ["MAR_h"]]
+MECHANISMS = [["MAR_l"]]
 EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
 N = 1
 MRS = ["05", "10", "15", "20", "25"]
@@ -91,8 +91,9 @@ if __name__ == "__main__":
 
             try:
                 subprocess.run(command, check=True)
-            except subprocess.CalledProcessError:
+            except subprocess.CalledProcessError as e:
                 failed_patients.setdefault(myphd_id, []).append((mr, i))
+                print(f"Error processing {myphd_id} with imputer {imp} for MR {mr} and mechanism {mech} at level {i}")
 
     def process_mr(pat, mr, i, mech, metric,
                IMP_MODELS, files_st, folder_path_c, folder_end,
@@ -150,6 +151,8 @@ if __name__ == "__main__":
     parser.add_argument("-m", "--metric", choices=["RHR", "HROS"], default="RHR", help="Metric to process (default: RHR)")
     args = parser.parse_args()
     METRIC = args.metric
+    print(f"Processing metric: {METRIC}")
+    print(f"MECHANISMS: {MECHANISMS}, MRS: {MRS}, IMP_MODELS: {IMP_MODELS}, N: {N}")
 
     threads = []
     for mech in MECHANISMS:
