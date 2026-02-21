@@ -14,11 +14,11 @@ from spotriver.evaluation.eval_bml import plot_bml_oml_horizon_metrics
 #ssh virtual-man-dos "/home/afonso/Desenvolvimento/Wearables-Assurance/run_imputation.sh"
 alias = "HAT"
 # MEC_BATCHES = [["MCAR"]]
-MEC_BATCHES = [["MCAR"],["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
+MEC_BATCHES = [["MAR_l", "MAR_m", "MAR_h"], ["MNAR_l", "MNAR_m", "MNAR_h"], ["MCAR"]]
 MRS = ["05", "10", "15", "20", "25"]
-N = 1
-P_NUM = 5
+P_NUM = 30
 M_NUM = 12000000000000
+N = 1
 
 SPLIT = 0
 HORIZON = 1
@@ -43,25 +43,25 @@ class MeanRegressor:
         return self.mean.get()
     
 param_grid = {
-    "mean": {},
-    "reg": {
-        'opt': [0.0001],
+    #"mean": {},
+    #"reg": {
+        #'opt': [0.0001],
         # 'l2': [0.0, 1e-5, 1e-4],
-    },
-    "tree": {
-        'gp': [10000],
+    #},
+    #"tree": {
+    #    'gp': [10000],
         # 'md': [5, 10, 15]
-    },
+    #},
     # # "knn": {
     # #     'k': [10],
     # # },
-    # "tree-ad": {
-    #     'gp': [5000, 10000],
-    #     'dw': [1000, 30000]
-    #     # 'md': [5, 10, 15]
-    # },
-    "mlp": {
-        'opt': [0.001],
+    "tree-ad": {
+         'gp': [5000],
+         'dw': [30000]
+         # 'md': [5, 10, 15]
+    },
+    #"mlp": {
+        #'opt': [0.001],
         # 'arq': [ 
         #     # ((3,3), (neural_net.activations.ReLU,
         #     #         neural_net.activations.ReLU,
@@ -72,7 +72,7 @@ param_grid = {
         #             neural_net.activations.ReLU,
         #             neural_net.activations.Identity)),
         # ],
-    }
+    #}
 }
     
 MODEL_FACTORY = {
@@ -334,6 +334,7 @@ if __name__ == "__main__":
     combined_pat_results = {}
 
     print(f"🚀 Iniciando processamento para mecanismos: {MEC_BATCHES} | Missing Rates: {MRS} | Datasets por paciente: {N} | Pacientes: {P_NUM}")
+    print(f"Modelos a serem avaliados: {list(MODELS.keys())}")
 
     total_time_start = time.time()
 
@@ -386,6 +387,7 @@ if __name__ == "__main__":
             if os.path.exists(result_path):
                 os.remove(result_path)
             results_df.to_csv(result_path, index=False)
+            print(f"✅ Resultados consolidados salvos em {result_path}")
 
             pat_records = []
             for mech in combined_pat_results:
@@ -410,6 +412,7 @@ if __name__ == "__main__":
             if os.path.exists(pat_path):
                 os.remove(pat_path)
             pat_df.to_csv(pat_path, index=False)
+            print(f"✅ Resultados por paciente salvos em {pat_path}")
 
     total_time_elapsed = time.time() - total_time_start
     hours = total_time_elapsed / 3600

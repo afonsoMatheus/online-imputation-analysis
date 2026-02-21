@@ -10,8 +10,8 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Utilizar Python 3.6.15
-# MECHANISMS = ["MCAR", "MAR_l", "MAR_m", "MAR_h", "MNAR_l", "MNAR_m", "MNAR_h"]
-MECHANISMS = [["MAR_l"]]
+MECHANISMS = [["MCAR"], ["MAR_l"], ["MAR_m"], ["MAR_h"], ["MNAR_l"], ["MNAR_m"], ["MNAR_h"]]
+#MECHANISMS = [["MAR_l"]]
 EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
 N = 1
 MRS = ["05", "10", "15", "20", "25"]
@@ -19,7 +19,7 @@ IMP_MODELS = [
     'mean',
     'reg_opt_00001',
     'tree_gp_10000',
-    'tree_ad_gp_10000',
+    'tree-ad_gp_5000-dw_30000',
     'mlp_opt_0001'
 ]
 
@@ -36,6 +36,8 @@ if __name__ == "__main__":
     def process_imputer(pat, mr, imp, i, mech, metric,
                      files_st, folder_path_c, folder_end,
                      contaminations, failed_patients):
+
+        print(f"Processing imputer {imp} for MR {mr} and mechanism {mech}")
 
         folder_path_m = f"{pat}/{i}/{imp}"
         files_hr = [

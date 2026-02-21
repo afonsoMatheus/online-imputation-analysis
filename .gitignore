@@ -16,5 +16,6 @@ run_all.py
 Metrics/
 3.Online/
 1.Offline/Scripts/Imputation/Tests
-1.Offline/Scripts/Imputation/Analysis
-1.Offline/Scripts/Imputation/CD_Diagram
+run_imputation.sh
+__pycache__/
+cd_diagram.py
