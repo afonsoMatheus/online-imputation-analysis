@@ -11,7 +11,6 @@ import time
 from eval_bml_imp import eval_oml_imp_horizon
 from spotriver.evaluation.eval_bml import plot_bml_oml_horizon_metrics
 
-#ssh virtual-man-dos "/home/afonso/Desenvolvimento/Wearables-Assurance/run_imputation.sh"
 alias = "HAT"
 # MEC_BATCHES = [["MCAR"]]
 MEC_BATCHES = [["MAR_l", "MAR_m", "MAR_h"], ["MNAR_l", "MNAR_m", "MNAR_h"], ["MCAR"]]
@@ -25,7 +24,7 @@ HORIZON = 1
 GRACE_PERIOD = 0
 OBSERVED_PATIENTS = ['A36HR6Y']
 EXCLUDED_PATIENTS = ['AJ7TSV9','AS2MVDL']
-FEATURES = ['hour', 'minute']  #second make patients 'AOYM4KG', 'APGIB2T' break in linear regression
+FEATURES = ['hour', 'minute'] 
 
 SEED = 1
 np.random.seed(SEED)
@@ -314,7 +313,6 @@ def process_mechanism(mech, num_datasets, mrs):
                     except Exception as e:
                         print(f"❌ Falha no MR {mr}: {e}")
 
-    # --- Normalização ---
     for mr in local_results[mech]:
         for imp in MODELS.keys():
             local_results[mech][mr][imp] /= len(patients) * num_datasets
