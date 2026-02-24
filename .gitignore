@@ -1,21 +1,80 @@
+############################
+# 🔹 Environment / System
+############################
+
 .history/
-1.Offline/Data/COVID-19-Wearables/
-1.Offline/Data/COVID-19-Wearables-Missing/
-1.Offline/Data/COVID-19-Wearables-Input/
-1.Offline/Data/boxplot.py
-1.Offline/Data/threshold_contamination.csv
-1.Offline/Results/Patients/
-1.Offline/Results/Metadata/
-2.Stanford/
-3.Online/Data/
-sleep_classifiers/
-Logs/
-3.Online/Scripts/Anomalies-Detection/Metrics
 .python-version
-run_all.py
-Metrics/
-3.Online/
-1.Offline/Scripts/Imputation/Tests
-run_imputation.sh
 __pycache__/
+Logs/
+
+############################
+# 🔹 Standalone files
+############################
+
+run_all.py
+run_imputation.sh
 cd_diagram.py
+*.eps
+
+############################
+# 🔹 Data
+############################
+
+Anomalies-Detection/Data/COVID-19-Wearables/
+Anomalies-Detection/Data/COVID-19-Wearables-Missing/
+Anomalies-Detection/Data/COVID-19-Wearables-Input/
+Anomalies-Detection/Data/boxplot.py
+Anomalies-Detection/Data/threshold_contamination.csv
+
+############################
+# 🔹 Results
+############################
+
+Anomalies-Detection/Results/Patients/
+Anomalies-Detection/Results/Metadata/
+
+# Keep only CD-AD-all.png
+Anomalies-Detection/Results/Imputers-AD/Plots/CD_Diagrams/*
+!Anomalies-Detection/Results/Imputers-AD/Plots/CD_Diagrams/CD-AD-all.png
+
+############################
+# 🔹 Scripts - Tests
+############################
+
+Anomalies-Detection/Scripts/Imputation/Tests
+
+############################
+# 🔹 Scripts - Analysis - Imp_Results
+############################
+
+Anomalies-Detection/Scripts/Imputation/Analysis/Imp_Results/*
+!Anomalies-Detection/Scripts/Imputation/Analysis/Imp_Results/imputation_results_by_patient.csv
+!Anomalies-Detection/Scripts/Imputation/Analysis/Imp_Results/imputation_results.csv
+
+############################
+# 🔹 Scripts - Analysis - Parameters
+############################
+
+Anomalies-Detection/Scripts/Imputation/Analysis/Parameters/*
+!Anomalies-Detection/Scripts/Imputation/Analysis/Parameters/imputation_results_by_patient.csv
+!Anomalies-Detection/Scripts/Imputation/Analysis/Parameters/imputation_results.csv
+
+############################
+# 🔹 Scripts - Analysis - Plots
+############################
+
+Anomalies-Detection/Scripts/Imputation/Analysis/Plots/CD_Diagrams/*
+!Anomalies-Detection/Scripts/Imputation/Analysis/Plots/CD_Diagrams/CD-imputers.png
+Anomalies-Detection/Results/Imputers-AD/Plots/CD_Diagrams/*
+!Anomalies-Detection/Results/Imputers-AD/Plots/CD_Diagrams/CD-AD-all.png
+
+############################
+# 🔹 Others
+############################
+
+2.Stanford/
+3.Online/
+3.Online/Data/
+3.Online/Scripts/Anomalies-Detection/Metrics
+sleep_classifiers/
+Metrics/
