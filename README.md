@@ -36,8 +36,7 @@ Anomalies-Detection/
 
 Clone the repository:
 
-git clone https://github.com/your-username/your-repo.git
-cd your-repo
+git clone https://github.com/afonsoMatheus/Wearables-Assessment
 
 Install dependencies:
 
@@ -47,24 +46,7 @@ For the rest: pip install -r requirements.txt
 
 ## Usage
 
-Run the complete pipeline:
 
-python run_all.py
-
-Run only the imputation module:
-
-bash run_imputation.sh
-
-## Outputs
-
-Results are saved inside:
-
-Anomalies-Detection/Results/
-
-Including:
-- Patient-level results
-- CD diagrams
-- Aggregated metrics
 
 ## License
 
