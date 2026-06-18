@@ -36,7 +36,7 @@ Anomalies-Detection/
 
 Clone the repository:
 
-git clone https://github.com/afonsoMatheus/Wearables-Assessment
+git clone https://github.com/afonsoMatheus/online-imputation-analysis
 
 Install dependencies:
 
